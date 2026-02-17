@@ -52,7 +52,7 @@ jobs:
       matrix:
         configuration: [Debug, Release]
 
-    runs-on: windows-latest ubuntu-latest macos-latest
+    runs-on: [windows-latest, ubuntu-latest, macos-latest]
 
     env:
       Solution_Name: BigFloat
