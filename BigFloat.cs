@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Collections.ObjectModel;
 using System.Numerics;
 using System.Text;
 
@@ -33,6 +35,7 @@ public readonly struct BigFloat : IComparable<BigFloat>, IEquatable<BigFloat> {
     public static readonly (int ExponentBits, int SignificandBits) Half = (5, 11);        // 16-bit
     public static readonly (int ExponentBits, int SignificandBits) Single = (8, 24);      // 32-bit
     public static readonly (int ExponentBits, int SignificandBits) Double = (11, 53);     // 64-bit
+    public static readonly (int ExponentBits, int SignificantBits) Extended = (15, 63);   // 80-bit
     public static readonly (int ExponentBits, int SignificandBits) Quadruple = (15, 113); // 128-bit
     
     // Default precision (matches double)
@@ -42,46 +45,61 @@ public readonly struct BigFloat : IComparable<BigFloat>, IEquatable<BigFloat> {
     private const int MinimalExponentBits = 1, MinimalPrecisionBits = 1;
     
     /// <summary>Positive zero with minimal representation.</summary>
-    public static readonly BigFloat Zero = new(BigInteger.Zero, BigInteger.Zero, false, SpecialValue.Zero, MinimalPrecisionBits, MinimalExponentBits);
+    public static readonly BigFloat Zero = 
+        new(BigInteger.Zero, BigInteger.Zero, false, SpecialValue.Zero, MinimalPrecisionBits, MinimalExponentBits);
     
     /// <summary>Negative zero with minimal representation.</summary>
-    public static readonly BigFloat NegZero = new(BigInteger.Zero, BigInteger.Zero, true, SpecialValue.Zero, MinimalPrecisionBits, MinimalExponentBits);
+    public static readonly BigFloat NegZero = 
+        new(BigInteger.Zero, BigInteger.Zero, true, SpecialValue.Zero, MinimalPrecisionBits, MinimalExponentBits);
     
     /// <summary>Positive one with minimal representation.</summary>
-    public static readonly BigFloat One = new(BigInteger.One, BigInteger.Zero, false, SpecialValue.None, MinimalPrecisionBits, MinimalExponentBits);
+    public static readonly BigFloat One = 
+        new(BigInteger.One, BigInteger.Zero, false, SpecialValue.None, MinimalPrecisionBits, MinimalExponentBits);
     
     /// <summary>Positive two with minimal representation.</summary>
-    public static readonly BigFloat Two = new(BigInteger.One, BigInteger.One, false, SpecialValue.None, MinimalPrecisionBits, MinimalExponentBits + 1);
+    public static readonly BigFloat Two = 
+        new(BigInteger.One, BigInteger.One, false, SpecialValue.None, MinimalPrecisionBits, MinimalExponentBits + 1);
 
     /// <summary>Positive one half with minimal representation.</summary>
-    public static readonly BigFloat OneHalf = new(BigInteger.One, BigInteger.MinusOne, false, SpecialValue.None,
-        MinimalPrecisionBits, MinimalExponentBits + 1);
+    public static readonly BigFloat OneHalf = 
+        new(BigInteger.One, BigInteger.MinusOne, false, SpecialValue.None, 
+            MinimalPrecisionBits, MinimalExponentBits + 1);
     
     /// <summary>Negative one with minimal representation.</summary>
-    public static readonly BigFloat NegOne = new(BigInteger.One, BigInteger.Zero, true, SpecialValue.None, MinimalPrecisionBits, MinimalExponentBits);
+    public static readonly BigFloat NegOne = 
+        new(BigInteger.One, BigInteger.Zero, true, SpecialValue.None, MinimalPrecisionBits, MinimalExponentBits);
     
     /// <summary>Positive infinity with minimal representation.</summary>
-    public static readonly BigFloat PosInf = new(BigInteger.Zero, BigInteger.Zero, false, SpecialValue.Infinity, MinimalPrecisionBits, MinimalExponentBits);
+    public static readonly BigFloat PosInf = 
+        new(BigInteger.Zero, BigInteger.Zero, false, SpecialValue.Infinity, MinimalPrecisionBits, MinimalExponentBits);
     
     /// <summary>Negative infinity with minimal representation.</summary>
-    public static readonly BigFloat NegInf = new(BigInteger.Zero, BigInteger.Zero, true, SpecialValue.Infinity, MinimalPrecisionBits, MinimalExponentBits);
+    public static readonly BigFloat NegInf = 
+        new(BigInteger.Zero, BigInteger.Zero, true, SpecialValue.Infinity, MinimalPrecisionBits, MinimalExponentBits);
     
     /// <summary>Quiet NaN with minimal representation.</summary>
-    public static readonly BigFloat NaN = new(BigInteger.One, BigInteger.Zero, false, SpecialValue.NaN, MinimalPrecisionBits, MinimalExponentBits);
+    public static readonly BigFloat NaN = 
+        new(BigInteger.One, BigInteger.Zero, false, SpecialValue.NaN, MinimalPrecisionBits, MinimalExponentBits);
     
     /// <summary>Quiet NaN with minimal representation (alias for NaN).</summary>
-    public static readonly BigFloat QuietNaN = new(BigInteger.One, BigInteger.Zero, false, SpecialValue.NaN, MinimalPrecisionBits, MinimalExponentBits);
+    public static readonly BigFloat QuietNaN = 
+        new(BigInteger.One, BigInteger.Zero, false, SpecialValue.NaN, MinimalPrecisionBits, MinimalExponentBits);
     
     /// <summary>Signaling NaN with minimal representation.</summary>
-    public static readonly BigFloat SignalingNaN = new(BigInteger.One, BigInteger.Zero, true, SpecialValue.NaN, MinimalPrecisionBits, MinimalExponentBits);
+    public static readonly BigFloat SignalingNaN = 
+        new(BigInteger.One, BigInteger.Zero, true, SpecialValue.NaN, MinimalPrecisionBits, MinimalExponentBits);
     
     // Cache for expensive constant calculations - stores only the most precise significand computed so far
     // Each constant has a known exponent: Pi, E, Ln10 are in [1,2) so exponent adjusts to put MSB at precisionBits
     // Ln2 is in [0.5,1) so it's 2^-1 relative to the others
-    // We store the significand normalized to have exactly _cachedPrecisionBits bits
-    private static BigInteger _piSignificand, _eSignificand, _ln2Significand, _ln10Significand;
-    private static int _piPrecisionBits, _ePrecisionBits, _ln2PrecisionBits, _ln10PrecisionBits;
-    private static readonly object _piLock = new(), _eLock = new(), _ln2Lock = new(), _ln10Lock = new();
+    // We store the significand normalized to have exactly _constPrecisions bits
+    private enum Consts { Pi, E, Ln2, Ln10 }
+    private static readonly ReadOnlyCollection<Func<int, BigFloat>> _constFuncs = [ComputePi, ComputeE, ComputeLn2, ComputeLn10];
+    private static readonly ReadOnlyCollection<int> _constExponents = new[] { Math.PI, Math.E, Math.Log(2), Math.Log(10) }
+        .Select(c => (int)(Math.Log2(c) + 1)).ToArray().AsReadOnly();
+    private static readonly ReadOnlyCollection<object> _constLocks = [new(), new(), new(), new()];
+    private static readonly BigInteger[] _constSignificands = [new(0), new(0), new(0), new(0)];
+    private static readonly int[] _constPrecisions = new int[4];
     
     #endregion
     
@@ -930,7 +948,7 @@ public readonly struct BigFloat : IComparable<BigFloat>, IEquatable<BigFloat> {
             a = a.ToPrecision(exponentBits ?? a._exponentBits, precisionBits ?? a._precisionBits);
 
         // Range reduction: e^x = 2^k * e^r where r = x - k*ln(2)
-        BigFloat ln2 = GetLn2(a._exponentBits, a._precisionBits);
+        BigFloat ln2 = Ln2(a._exponentBits, a._precisionBits);
         BigFloat k = Floor(a / ln2), r = a - k * ln2;
         
         // Taylor series for e^r
@@ -975,20 +993,20 @@ public readonly struct BigFloat : IComparable<BigFloat>, IEquatable<BigFloat> {
             sum = newSum;
         }
         
-        BigFloat ln2 = GetLn2(a._exponentBits, a._precisionBits);
+        BigFloat ln2 = Ln2(a._exponentBits, a._precisionBits);
         return sum * Two + FromBigInteger(exp, a._exponentBits, a._precisionBits) * ln2;
     }
 
     public BigFloat Log(int? precisionBits = null, int? exponentBits = null) => Log(this, precisionBits, exponentBits);
     // log10(x) = ln(x) / ln(10)
     public static BigFloat Log(BigFloat a, int? precisionBits = null, int? exponentBits = null) =>
-        Ln(a, precisionBits, exponentBits) / GetLn10(exponentBits ?? a._exponentBits,
+        Ln(a, precisionBits, exponentBits) / Ln10(exponentBits ?? a._exponentBits,
             precisionBits ?? a._precisionBits);
 
     public BigFloat Log2(int? precisionBits = null, int? exponentBits = null) => Log2(this, precisionBits, exponentBits);
     // log2(x) = ln(x) / ln(2)
     public static BigFloat Log2(BigFloat a, int? precisionBits = null, int? exponentBits = null) => 
-        Ln(a, precisionBits, exponentBits) / GetLn2(exponentBits ?? a._exponentBits, precisionBits ?? a._precisionBits);
+        Ln(a, precisionBits, exponentBits) / Ln2(exponentBits ?? a._exponentBits, precisionBits ?? a._precisionBits);
 
     public BigFloat Sin(int? precisionBits = null, int? exponentBits = null) => Sin(this, precisionBits, exponentBits);
     public static BigFloat Sin(BigFloat a, int? precisionBits = null, int? exponentBits = null) {
@@ -997,7 +1015,7 @@ public readonly struct BigFloat : IComparable<BigFloat>, IEquatable<BigFloat> {
         if (precisionBits is not null || exponentBits is not null)
             a = a.ToPrecision(exponentBits ?? a._exponentBits, precisionBits ?? a._precisionBits);
         // Range reduction to [-π, π]
-        BigFloat pi = GetPi(a._exponentBits, a._precisionBits);
+        BigFloat pi = Pi(a._exponentBits, a._precisionBits);
         BigFloat twoPi = pi * Two;
         
         // Reduce to [-π, π]
@@ -1028,7 +1046,7 @@ public readonly struct BigFloat : IComparable<BigFloat>, IEquatable<BigFloat> {
             a = a.ToPrecision(exponentBits ?? a._exponentBits, precisionBits ?? a._precisionBits);
         
         // cos(x) = sin(x + π/2)
-        BigFloat piOver2 = GetPi(a._exponentBits, a._precisionBits) * OneHalf;
+        BigFloat piOver2 = Pi(a._exponentBits, a._precisionBits) * OneHalf;
         return Sin(a + piOver2);
     }
 
@@ -1055,7 +1073,7 @@ public readonly struct BigFloat : IComparable<BigFloat>, IEquatable<BigFloat> {
         if (precisionBits is not null || exponentBits is not null)
             a = a.ToPrecision(exponentBits ?? a._exponentBits, precisionBits ?? a._precisionBits);
         // acos(x) = π/2 - asin(x)
-        BigFloat piOver2 = GetPi(a._exponentBits, a._precisionBits) * OneHalf;
+        BigFloat piOver2 = Pi(a._exponentBits, a._precisionBits) * OneHalf;
         return piOver2 - Asin(a);
     }
 
@@ -1065,8 +1083,8 @@ public readonly struct BigFloat : IComparable<BigFloat>, IEquatable<BigFloat> {
         if (a.IsNaN) return a;
         if (precisionBits is not null || exponentBits is not null)
             a = a.ToPrecision(exponentBits ?? a._exponentBits, precisionBits ?? a._precisionBits);
-        if (a.IsPositiveInfinity) return GetPi(a._exponentBits, a._precisionBits) * OneHalf;
-        if (a.IsNegativeInfinity) return GetPi(a._exponentBits, a._precisionBits) * -OneHalf;
+        if (a.IsPositiveInfinity) return Pi(a._exponentBits, a._precisionBits) * OneHalf;
+        if (a.IsNegativeInfinity) return Pi(a._exponentBits, a._precisionBits) * -OneHalf;
         if (a.IsZero) return a;
         
         // Range reduction: if |x| > 1, use atan(x) = π/2 - atan(1/x)
@@ -1084,7 +1102,7 @@ public readonly struct BigFloat : IComparable<BigFloat>, IEquatable<BigFloat> {
         }
         
         if (invert) {
-            BigFloat piOver2 = GetPi(a._exponentBits, a._precisionBits) * OneHalf;
+            BigFloat piOver2 = Pi(a._exponentBits, a._precisionBits) * OneHalf;
             sum = a._isNegative ? -piOver2 + Abs(sum) : piOver2 - sum;
         }
         
@@ -1099,7 +1117,7 @@ public readonly struct BigFloat : IComparable<BigFloat>, IEquatable<BigFloat> {
         
         if (x.IsNaN || y.IsNaN || x.IsZero && y.IsZero) return NaN;
         
-        BigFloat pi = GetPi(exponentBits.Value, precisionBits.Value);
+        BigFloat pi = Pi(exponentBits.Value, precisionBits.Value);
         if (x.IsZero) return pi * (y._isNegative ? -OneHalf : OneHalf);
 
         BigFloat atan = Atan(y / x);
@@ -1279,114 +1297,53 @@ public readonly struct BigFloat : IComparable<BigFloat>, IEquatable<BigFloat> {
         int workingPrecision = precisionBits + 64, workingExponent = 20;
         return Ln(FromInt(10, workingExponent, workingPrecision));
     }
-    
-    private static BigFloat GetPi(int exponentBits, int precisionBits) {
-        lock (_piLock) {
-            if (_piPrecisionBits < precisionBits) {
-                // Need to compute with more precision
-                BigFloat computed = ComputePi(precisionBits);
-                // Normalize to exactly precisionBits
-                int bitLen = (int)BigInteger.Log2(computed._significand) + 1;
-                _piSignificand = bitLen > precisionBits
-                    ? computed._significand >> (bitLen - precisionBits)
-                    : computed._significand << (precisionBits - bitLen);
-                _piPrecisionBits = precisionBits;
-            }
-            
-            // Derive the requested precision from cached value
-            BigInteger sig = _piPrecisionBits > precisionBits
-                ? _piSignificand >> (_piPrecisionBits - precisionBits)
-                : _piSignificand;
-            // Pi is in [2,4), so exponent = 2 - precisionBits (since sig has precisionBits bits with MSB set)
-            return Normalize(sig, 2 - precisionBits, false, SpecialValue.None, precisionBits, exponentBits);
-        }
-    }
-    
-    private static BigFloat GetE(int exponentBits, int precisionBits) {
-        lock (_eLock) {
-            if (_ePrecisionBits < precisionBits) {
-                BigFloat computed = ComputeE(precisionBits);
-                int bitLen = (int)BigInteger.Log2(computed._significand) + 1;
-                _eSignificand = bitLen > precisionBits
-                    ? computed._significand >> (bitLen - precisionBits)
-                    : computed._significand << (precisionBits - bitLen);
-                _ePrecisionBits = precisionBits;
-            }
 
-            BigInteger sig = _ePrecisionBits > precisionBits
-                ? _eSignificand >> (_ePrecisionBits - precisionBits)
-                : _eSignificand;
-            // E is in [2,4), so exponent = 2 - precisionBits
-            return Normalize(sig, 2 - precisionBits, false, SpecialValue.None, precisionBits, exponentBits);
-        }
-    }
-    
-    private static BigFloat GetLn2(int exponentBits, int precisionBits) {
-        lock (_ln2Lock) {
-            if (_ln2PrecisionBits < precisionBits) {
-                BigFloat computed = ComputeLn2(precisionBits);
-                int bitLen = (int)BigInteger.Log2(computed._significand) + 1;
-                _ln2Significand = bitLen > precisionBits
-                    ? computed._significand >> (bitLen - precisionBits)
-                    : computed._significand << (precisionBits - bitLen);
-                _ln2PrecisionBits = precisionBits;
+    private static BigFloat GetConst(Consts @const, int exponentBits, int precisionBits) {
+        int constNum = (int)@const;
+        lock (_constLocks[constNum]) {
+            if (_constPrecisions[constNum] < precisionBits) {
+                BigFloat computed = _constFuncs[constNum](precisionBits);
+                int shl = precisionBits - (int)(BigInteger.Log2(computed._significand) + 1);
+                _constSignificands[constNum] = shl > 0 ? computed._significand << shl : computed._significand >> -shl;
+                _constPrecisions[constNum] = precisionBits;
             }
-
-            BigInteger sig = _ln2PrecisionBits > precisionBits
-                ? _ln2Significand >> (_ln2PrecisionBits - precisionBits)
-                : _ln2Significand;
-            // Ln2 is in [0.5,1), so exponent = 0 - precisionBits = -precisionBits (one less than others)
-            return Normalize(sig, -precisionBits, false, SpecialValue.None, precisionBits, exponentBits);
+            int diff = _constPrecisions[constNum] - precisionBits;
+            BigInteger sig = diff > 0 ? _constSignificands[constNum] >> diff : _constSignificands[constNum];
+            return Normalize(sig, _constExponents[constNum] - precisionBits, false, SpecialValue.None,
+                precisionBits, exponentBits);
         }
     }
-    
-    private static BigFloat GetLn10(int exponentBits, int precisionBits) {
-        lock (_ln10Lock) {
-            if (_ln10PrecisionBits < precisionBits) {
-                BigFloat computed = ComputeLn10(precisionBits);
-                int bitLen = (int)BigInteger.Log2(computed._significand) + 1;
-                _ln10Significand = bitLen > precisionBits
-                    ? computed._significand >> (bitLen - precisionBits)
-                    : computed._significand << (precisionBits - bitLen);
-                _ln10PrecisionBits = precisionBits;
-            }
 
-            BigInteger sig = _ln10PrecisionBits > precisionBits
-                ? _ln10Significand >> (_ln10PrecisionBits - precisionBits)
-                : _ln10Significand;
-            // Ln10 is in [2,4), so exponent = 2 - precisionBits
-            return Normalize(sig, 2 - precisionBits, false, SpecialValue.None, precisionBits, exponentBits);
-        }
-    }
-    
     /// <summary>
     /// Returns π with the specified precision. Results are cached (only most precise version is stored).
     /// </summary>
     public static BigFloat Pi(int exponentBits = 2, int precisionBits = DefaultPrecisionBits) => 
-        GetPi(exponentBits, precisionBits);
+        GetConst(Consts.Pi, exponentBits, precisionBits);
 
     /// <summary>
     /// Returns e (Euler's number) with the specified precision. Results are cached (only most precise version is stored).
     /// </summary>
     public static BigFloat E(int exponentBits = 2, int precisionBits = DefaultPrecisionBits) => 
-        GetE(exponentBits, precisionBits);
+        GetConst(Consts.E, exponentBits, precisionBits);
 
     public static BigFloat Ln2(int exponentBits = 1, int precisionBits = DefaultPrecisionBits) =>
-        GetLn2(exponentBits, precisionBits);
+        GetConst(Consts.Ln2, exponentBits, precisionBits);
     
     public static BigFloat Ln10(int exponentBits = 2, int precisionBits = DefaultPrecisionBits) =>
-        GetLn10(exponentBits, precisionBits);
-    
+        GetConst(Consts.Ln10, exponentBits, precisionBits);
+
     /// <summary>
     /// Clears the constant caches. Useful for releasing memory after high-precision calculations.
     /// </summary>
     public static void ClearConstantCaches() {
-        lock (_piLock) { _piSignificand = BigInteger.Zero; _piPrecisionBits = 0; }
-        lock (_eLock) { _eSignificand = BigInteger.Zero; _ePrecisionBits = 0; }
-        lock (_ln2Lock) { _ln2Significand = BigInteger.Zero; _ln2PrecisionBits = 0; }
-        lock (_ln10Lock) { _ln10Significand = BigInteger.Zero; _ln10PrecisionBits = 0; }
+        for (int i = 0; i < _constLocks.Count; i++) {
+            lock (_constLocks[i]) {
+                _constSignificands[i] = BigInteger.Zero;
+                _constPrecisions[i] = 0;
+            }
+        }
     }
-    
+
     #endregion
     
     #region Comparison

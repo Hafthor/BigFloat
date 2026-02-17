@@ -38,6 +38,11 @@ public class BigFloatBenchmarks {
         
         // Clear caches to ensure fair comparison on first run
         BigFloat.ClearConstantCaches();
+        // Pre-calculate constants, since they are assumed to already be populated in most cases
+        _ = BigFloat.Pi(2, 500);
+        _ = BigFloat.E(2, 500);
+        _ = BigFloat.Ln2(2, 500);
+        _ = BigFloat.Ln10(2, 500);
     }
     
     #region Arithmetic Operations - 53-bit (Double Precision)
