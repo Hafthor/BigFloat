@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.Numerics;
 using System.Text;
@@ -98,7 +97,8 @@ public readonly struct BigFloat : IComparable<BigFloat>, IEquatable<BigFloat> {
     private static readonly ReadOnlyCollection<int> _constExponents = new[] { Math.PI, Math.E, Math.Log(2), Math.Log(10) }
         .Select(c => (int)(Math.Log2(c) + 1)).ToArray().AsReadOnly();
     private static readonly ReadOnlyCollection<object> _constLocks = [new(), new(), new(), new()];
-    private static readonly BigInteger[] _constSignificands = [new(0), new(0), new(0), new(0)];
+    private static readonly BigInteger[] _constSignificands =
+        [BigInteger.Zero, BigInteger.Zero, BigInteger.Zero, BigInteger.Zero];
     private static readonly int[] _constPrecisions = new int[4];
     
     #endregion
@@ -220,7 +220,8 @@ public readonly struct BigFloat : IComparable<BigFloat>, IEquatable<BigFloat> {
         // Handle special values (case-insensitive)
         if (value.Equals("nan", StringComparison.OrdinalIgnoreCase) || 
             value.Equals("+nan", StringComparison.OrdinalIgnoreCase)) return NaN;
-        if (value.Equals("-nan", StringComparison.OrdinalIgnoreCase)) return SignalingNaN;
+        if (value.Equals("-nan", StringComparison.OrdinalIgnoreCase) || 
+            value.Equals("snan", StringComparison.OrdinalIgnoreCase)) return SignalingNaN;
         if (value.Equals("inf", StringComparison.OrdinalIgnoreCase) || 
             value.Equals("+inf", StringComparison.OrdinalIgnoreCase) ||
             value.Equals("infinity", StringComparison.OrdinalIgnoreCase) || 
