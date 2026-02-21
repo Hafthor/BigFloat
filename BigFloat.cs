@@ -93,31 +93,7 @@ public readonly struct BigFloat : IComparable<BigFloat>, IEquatable<BigFloat> {
     public static readonly BigFloat SignalingNaN =
         new(BigInteger.One, BigInteger.Zero, MinimalPrecisionBits, MinimalExponentBits,
             SpecialValue.NaN | SpecialValue.Negative);
-
-    // Cache for expensive constant calculations - stores only the most precise significand computed so far
-    // Each constant has a known exponent: Pi, E, Ln10 are in [1,2) so exponent adjusts to put MSB at precisionBits
-    // Ln2 is in [0.5,1) so it's 2^-1 relative to the others
-    // We store the significand normalized to have exactly _constPrecisions bits
-    private enum Consts {
-        Pi,
-        E,
-        Ln2,
-        Ln10
-    }
-
-    private static readonly ReadOnlyCollection<Func<int, BigFloat>> ConstCompute =
-        [ComputePi, ComputeE, ComputeLn2, ComputeLn10];
-
-    private static readonly ReadOnlyCollection<int> ConstExponents =
-        new[] { Math.PI, Math.E, Math.Log(2), Math.Log(10) }
-            .Select(c => (int)(Math.Log2(c) + 1)).ToArray().AsReadOnly();
-
-    private static readonly ReadOnlyCollection<object> ConstLocks = [new(), new(), new(), new()];
-
-    private static readonly BigInteger[] ConstSignificands = [0, 0, 0, 0];
-
-    private static readonly int[] ConstPrecisions = new int[4];
-
+    
     #endregion
 
     #region Constructors
@@ -1308,6 +1284,30 @@ public readonly struct BigFloat : IComparable<BigFloat>, IEquatable<BigFloat> {
     // Ln2 ≈ 0.69314... is in [0.5, 1), so normalized significand * 2^-1 (exponent = -precisionBits)
     // Ln10 ≈ 2.30258... is in [2, 4), so normalized significand * 2^1 (exponent = 2 - precisionBits)
 
+    // Cache for expensive constant calculations - stores only the most precise significand computed so far
+    // Each constant has a known exponent: Pi, E, Ln10 are in [1,2) so exponent adjusts to put MSB at precisionBits
+    // Ln2 is in [0.5,1) so it's 2^-1 relative to the others
+    // We store the significand normalized to have exactly _constPrecisions bits
+    private enum Consts {
+        Pi,
+        E,
+        Ln2,
+        Ln10
+    }
+
+    private static readonly ReadOnlyCollection<Func<int, BigFloat>> ConstCompute =
+        [ComputePi, ComputeE, ComputeLn2, ComputeLn10];
+
+    private static readonly ReadOnlyCollection<int> ConstExponents =
+        new[] { Math.PI, Math.E, Math.Log(2), Math.Log(10) }
+            .Select(c => (int)(Math.Log2(c) + 1)).ToArray().AsReadOnly();
+
+    private static readonly ReadOnlyCollection<object> ConstLocks = [new(), new(), new(), new()];
+
+    private static readonly BigInteger[] ConstSignificands = [0, 0, 0, 0];
+
+    private static readonly int[] ConstPrecisions = new int[4];
+    
     private static BigFloat ComputePi(int precisionBits) {
         // Compute π using Machin's formula: π/4 = 4*arctan(1/5) - arctan(1/239)
         // Use extra precision for intermediate calculations
