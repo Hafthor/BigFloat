@@ -78,6 +78,9 @@ public class BigFloatTests {
     public void Parse_DecimalString_Correct() {
         var bf = BigFloat.Parse("3.14159");
         Assert.AreEqual(3.14159, bf.ToDouble(), 1e-5);
+        Assert.AreEqual(0.0, BigFloat.Parse(".e0").ToDouble());
+        Assert.AreEqual(0.0, BigFloat.Parse("0x.p0").ToDouble());
+        Assert.AreEqual(0.5, BigFloat.Parse("0x0.8").ToDouble());
     }
     
     [TestMethod]
@@ -89,8 +92,10 @@ public class BigFloatTests {
     [TestMethod]
     public void Parse_SpecialValues_Correct() {
         Assert.IsTrue(BigFloat.Parse("NaN").IsNaN);
+        Assert.IsTrue(BigFloat.Parse("sNaN").IsSignalingNaN);
         Assert.IsTrue(BigFloat.Parse("Infinity").IsPositiveInfinity);
         Assert.IsTrue(BigFloat.Parse("-Infinity").IsNegativeInfinity);
+        Assert.Throws<ArgumentException>(() => BigFloat.Parse("   "));
     }
     
     #endregion
@@ -157,9 +162,9 @@ public class BigFloatTests {
     public void Add_PositiveNumbers_Correct() {
         var a = BigFloat.FromDouble(3.5);
         var b = BigFloat.FromDouble(2.5);
-        var result = BigFloat.Add(a, b);
         
-        Assert.AreEqual(6.0, result.ToDouble(), Epsilon);
+        Assert.AreEqual(6.0, (a + b).ToDouble(), Epsilon);
+        Assert.AreEqual(6.0, (b + a).ToDouble(), Epsilon);
     }
     
     [TestMethod]
@@ -386,19 +391,16 @@ public class BigFloatTests {
     }
     
     [TestMethod]
-    public void Min_Correct() {
+    public void MinMax_Correct() {
         var a = BigFloat.FromDouble(3.0);
         var b = BigFloat.FromDouble(5.0);
+        var c = BigFloat.FromDouble(7.0);
+        var d = BigFloat.FromDouble(4.0);
+        var e = BigFloat.FromDouble(6.0);
         
-        Assert.AreEqual(3.0, BigFloat.Min(a, b).ToDouble(), Epsilon);
-    }
-    
-    [TestMethod]
-    public void Max_Correct() {
-        var a = BigFloat.FromDouble(3.0);
-        var b = BigFloat.FromDouble(5.0);
-        
-        Assert.AreEqual(5.0, BigFloat.Max(a, b).ToDouble(), Epsilon);
+        Assert.AreEqual(3.0, BigFloat.Min(a, b, c, d, e).ToDouble(), Epsilon);
+        Assert.AreEqual(7.0, BigFloat.Max(a, b, c, d, e).ToDouble(), Epsilon);
+        Assert.AreEqual((a, c), BigFloat.MinMax(a, b, c, d, e));
     }
     
     #endregion
@@ -1379,6 +1381,8 @@ public class BigFloatTests {
     public void MathFunctions_Sqrt2() {
         var result = BigFloat.Sqrt(BigFloat.FromDouble(2));
         Assert.AreEqual(Math.Sqrt(2), result.ToDouble(), Epsilon);
+        
+        Assert.AreEqual(1.414, BigFloat.FromDouble(2).Sqrt(8, 2).ToDouble(), 1e-3);
     }
     
     [TestMethod]
@@ -1386,6 +1390,7 @@ public class BigFloatTests {
         var piOver6 = BigFloat.Divide(BigFloat.Pi(), BigFloat.FromDouble(6));
         var result = BigFloat.Sin(piOver6);
         Assert.AreEqual(0.5, result.ToDouble(), 1e-10);
+        Assert.AreEqual(0.5, piOver6.Sin(5, 3).ToDouble(), 1e-10);
     }
     
     [TestMethod]
@@ -1393,6 +1398,7 @@ public class BigFloatTests {
         var piOver3 = BigFloat.Divide(BigFloat.Pi(), BigFloat.FromDouble(3));
         var result = BigFloat.Cos(piOver3);
         Assert.AreEqual(0.5, result.ToDouble(), 1e-10);
+        Assert.AreEqual(0.5, piOver3.Cos(6, 4).ToDouble(), 1e-10);
     }
     
     [TestMethod]
@@ -1400,12 +1406,14 @@ public class BigFloatTests {
         var e = BigFloat.E(15);
         var result = BigFloat.Ln(e);
         Assert.AreEqual(1.0, result.ToDouble(), 1e-10);
+        Assert.AreEqual(1.0, e.Ln(5, 3).ToDouble(), 1e-10);
     }
     
     [TestMethod]
     public void MathFunctions_Exp1() {
         var result = BigFloat.Exp(BigFloat.FromDouble(1));
         Assert.AreEqual(Math.E, result.ToDouble(), 1e-10);
+        Assert.AreEqual(Math.E, BigFloat.FromDouble(1).Exp(14, 3).ToDouble(), 1e-4);
     }
     
     [TestMethod]
@@ -1422,6 +1430,8 @@ public class BigFloatTests {
         var s = piHighPrec.ToString(30);
         Assert.AreEqual("3.141592653589793238462643383279", s);
         // should be     3.141592653589793238462643383280 because of rounding
+        
+        Assert.AreEqual(Math.PI, BigFloat.Pi().ToDouble());
     }
     
     [TestMethod]
@@ -1437,6 +1447,8 @@ public class BigFloatTests {
         var s = eHighPrec.ToString(30);
         Assert.AreEqual("2.718281828459045235360287471351", s);
         // should be     2.718281828459045235360287471353 because of rounding
+        
+        Assert.AreEqual(Math.E, BigFloat.E().ToDouble());
     }
     
     [TestMethod]
@@ -1504,6 +1516,20 @@ public class BigFloatTests {
         
         // The difference should be tiny
         Assert.IsLessThan(1e-50, diff.ToDouble());
+    }
+
+    [TestMethod]
+    public void CloseToInteger() {
+        var n163 = BigFloat.FromBigInteger(163, 20, 100);
+        var sqrt = n163.Sqrt();
+        var pow = sqrt * BigFloat.Pi(20, 100);
+        var result = pow.Exp();
+        Assert.AreEqual(262537412640768744, result.ToDouble());
+        Assert.AreEqual("2.625374126407687439999640646977e17", result.ToString(30));
+        Assert.AreEqual("2.625374126407687439999641e17", result.ToString(24));
+        Assert.AreEqual("2.62537412640768743999964e17", result.ToString(23));
+        Assert.AreEqual("2.6253741264076874399996e17", result.ToString(22));
+        Assert.AreEqual("2.625374126407687440000e17", result.ToString(21));
     }
     
     #endregion
